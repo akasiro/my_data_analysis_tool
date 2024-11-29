@@ -22,8 +22,12 @@ from xgboost import plot_tree
 
 # 个性化包
 sys.path.append('/Users/ping/Desktop/chenping06backup/Desktop/chenping/from')
+sys.path.append('/Users/ping/Desktop/chenping06backup/Desktop/chenping/tool/')
 # 新版
 from ABTestStatsAnalysis import DiDMultMetric
+
+# 工具
+from my_data_analysis_tool import exp_analysis_tool #urlToParam,toTable,genExpQueryParam,expMetricCal
 
 # mac中文字体显示
 plt.rcParams['font.sans-serif'] = ['Arial Unicode MS']
@@ -32,4 +36,5 @@ plt.rcParams.update({'font.size': 20})
 # 不显示警告
 warnings.filterwarnings('ignore')
 
-
+# 数据读取地址
+read_path = '/Users/ping/Downloads/'

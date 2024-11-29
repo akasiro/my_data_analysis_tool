@@ -28,7 +28,11 @@ if __name__ == '__main__':
         'Score': [0.85, 0.90, 0.95],
         's':[1,2,-3]
         ,'s2':[1,2,3]
+        ,'s3':[2,3,4]
     }
     df = pd.DataFrame(data)
     df_s = df.style.pipe(tableStyle)
-    df_s
+    def tmpfunc(df):
+        if df['s'] > 0:
+            
+    df_s.apply()
