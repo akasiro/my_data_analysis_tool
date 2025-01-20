@@ -16,6 +16,8 @@ def expMetricCal(df,metric_cols = ['dau','launch_cnt','app_use_duration','avg_ap
         return df['valid_csm_first_tag_num_75th']/df['dau']
     def gen_avg_play_duration(df):
         return df['play_duration']/df['dau']
+    def gen_avg_launch_cnt(df):
+        return df['launch_cnt']/df['dau']
     metric_dict = {
         'dt':gen_dt
         ,'dau':gen_dau
@@ -25,6 +27,7 @@ def expMetricCal(df,metric_cols = ['dau','launch_cnt','app_use_duration','avg_ap
         ,'avg_play_cnt':gen_avg_play_cnt
         ,'mult':gen_mult
         ,'avg_play_duration':gen_avg_play_duration
+        ,'avg_launch_cnt':gen_avg_launch_cnt
     }
     for i in metric_cols:
         if i in metric_dict.keys():

@@ -1,5 +1,5 @@
 # 内置包
-import sys,time,re,warnings
+import sys,time,re,warnings,os
 from datetime import datetime
 from math import sqrt, ceil
 
@@ -20,6 +20,10 @@ import xgboost as xgb
 from xgboost import XGBRegressor as XGBR
 from xgboost import plot_tree
 
+# 展示
+from IPython.display import HTML
+
+
 # 个性化包
 sys.path.append('/Users/ping/Desktop/chenping06backup/Desktop/chenping/from')
 sys.path.append('/Users/ping/Desktop/chenping06backup/Desktop/chenping/tool/')
@@ -27,7 +31,7 @@ sys.path.append('/Users/ping/Desktop/chenping06backup/Desktop/chenping/tool/')
 from ABTestStatsAnalysis import DiDMultMetric
 
 # 工具
-from my_data_analysis_tool import exp_analysis_tool #urlToParam,toTable,genExpQueryParam,expMetricCal
+from my_data_analysis_tool import exp_analysis_tool as myeal #urlToParam,toTable,genExpQueryParam,expMetricCal
 
 # mac中文字体显示
 plt.rcParams['font.sans-serif'] = ['Arial Unicode MS']
