@@ -302,7 +302,7 @@ def plotab(model, group_agg=True,plot_type= 'relative',base_group=None, mean_col
         axes[i].set_ylabel(metric_col,fontsize = 40)
         axes[i].legend(fontsize = 40)
     return df_tmp
-def formatres(df,dimensions = None,sortlist = None):
+def formatres(df,dimensions = None,sortlist = None,negmetric = None):
     if dimensions:
         cls = df.pivot(columns = dimensions,index='指标名称',values='AB阶段净提升').applymap(lambda x: -1 if '-' in str(x) else 1)
         cls2 = df.pivot(columns = dimensions,index='指标名称',values='显著性').applymap(lambda x: 1 if '*' in str(x) else 0)
@@ -312,6 +312,8 @@ def formatres(df,dimensions = None,sortlist = None):
         cls2 = df.pivot(columns='对比分组',index='指标名称',values='显著性').applymap(lambda x: 1 if '*' in str(x) else 0)
         res = df.pivot(index = '指标名称',columns='对比分组',values='AB阶段净提升')
     cls = cls * cls2
+    if negmetric:
+        cls.loc[negmetric] = cls.loc[negmetric] * -1
     cls = cls.applymap(lambda x:'redcell' if x > 0 else ('greencell' if x <0 else 'greycell'))
     if sortlist:
         res = res.loc[sortlist,:]
@@ -347,7 +349,7 @@ if __name__ == '__main__':
     #     ,'dt_AB_start' : '2024-11-01'
     #     ,'dt_AB_end' : '2024-11-11'
     # }
-    url = 'https://abtest-sgp.corp.kuaishou.com/abnew#/experiment/11355/analysis?analysisType=1&queryType=2&setting=%7B%22rankSum%22:%5B3%5D,%22ab%22:%5B2,4,12,1,8,3%5D,%22did%22:%5B12,3,4%5D,%22CUPED%22:%5B2,4%5D,%22Kace%22:%5B4%5D%7D&configId=%22oversea_ecosystem_new%22&configIdNumber=526&fromGroup=%5B%22w_n_kwai_apps_did_1175:eco_test_40_10p:base%22%5D&toGroup=%5B%22w_n_kwai_apps_did_1175:eco_test_40_10p:exp6%22%5D&filter=%5B%5D&granularity=%22day%22&pValue=0.95&compareMethod=2&rankMethod=%22normal%22&preAAStartTime=1728403200000&preAAEndTime=1728921599000&toGroups=%5B%7B%22name%22:%22toGroup%22,%22groups%22:%5B%22w_n_kwai_apps_did_1175:eco_test_40_10p:exp2%22%5D%7D%5D&metricLevels=%5B1,2,3,0%5D&metricRankId=0&pageLabelId=0&aggregate=true&metricList=%5B%5D&produceTypes=%5B2%5D&filterTab=1&enterType=%22NORMAL%22&extremumMetrics=%7B%7D&complexFilter=%7B%22logicOp%22:%22AND%22,%22singleFilter%22:%5B%7B%22categoryName%22:%22category_name%22,%22categoryNameCn%22:%22category_name%22,%22type%22:%22in%22,%22label%22:%22in%22,%22values%22:%5B%5D,%22categoryValues%22:%5B%7B%22dimValue%22:%22br%22,%22dimValueCn%22:%22br%22%7D%5D,%22isCore%22:false,%22isGaia%22:false%7D%5D%7D&dimensions=%5B%5D&isShowSum=false&analysisMode=0&cohortWindow=1&cohortWindowType=%22n_days%22&cohortAnalysisDateRange=%5B%5D&from=1730908800000&to=1731340799000&worldName=%22w_n_kwai_apps_did_1175%22&experimentName=%22eco_test_40_10p%22&orgInfo=%7B%22orgId%22:10014%7D&experimentType=%22NORMAL%22&groupQueryParams=%5B%5D&isShared=false'
+    url = 'testurl'
     param2 = urlToParam(url)
     df_s = toTable(url)
     did_param = genExpQueryParam(**param2)
