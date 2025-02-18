@@ -5,6 +5,9 @@ from datetime import datetime,timedelta
 import numpy as np
 import pandas as pd
 from collections import defaultdict
+import seaborn as sns
+import matplotlib.pyplot as plt
+import matplotlib.ticker as ticker
 
 def parse_url_params(url):
     # 找到问号的位置，参数从问号后开始
@@ -195,6 +198,12 @@ def expMetricCal(df,metric_cols = ['dau','launch_cnt','app_use_duration','avg_ap
         return df['negtive_play_cnt']/df['play_cnt']
     def gen_pos_vv_rate(df):
         return df['v1_positive_play_cnt']/df['play_cnt']
+    def gen_lt7(df):
+        return df['lt_7d']/df['dau']
+    def gen_valid_interest_num_fisrt(df):
+        return df['valid_interest_num_fisrt']/df['dau']
+    def gen_valid_interest_num_second(df):
+        return df['valid_interest_num_second']/df['dau']
     metric_dict = {
         'dt':gen_dt
         ,'dau':gen_dau
@@ -216,6 +225,9 @@ def expMetricCal(df,metric_cols = ['dau','launch_cnt','app_use_duration','avg_ap
         ,'skip115_rate':gen_skip115_rate
         ,'neg_vv_rate':gen_neg_vv_rate
         ,'pos_vv_rate':gen_pos_vv_rate
+        ,'lt7':gen_lt7
+        ,'valid_interest_num_fisrt':gen_valid_interest_num_fisrt
+        ,'valid_interest_num_second':gen_valid_interest_num_second
     }
     for i in metric_cols:
         if i in metric_dict.keys():
@@ -233,24 +245,24 @@ def plotab(model, group_agg=True,plot_type= 'relative',base_group=None, mean_col
     n_rows = len(model.metric_cols)
     def timeArea(value):
         value = datetime.strptime(value,format('%Y-%m-%d'))
-        aa_start = datetime.strptime(m.dt_AA_start,format('%Y-%m-%d'))
-        aa_end = datetime.strptime(m.dt_AA_end,format('%Y-%m-%d'))
-        ab_start = datetime.strptime(m.dt_AB_start,format('%Y-%m-%d'))
-        ab_end = datetime.strptime(m.dt_AB_end,format('%Y-%m-%d'))
+        aa_start = datetime.strptime(model.dt_AA_start,format('%Y-%m-%d'))
+        aa_end = datetime.strptime(model.dt_AA_end,format('%Y-%m-%d'))
+        ab_start = datetime.strptime(model.dt_AB_start,format('%Y-%m-%d'))
+        ab_end = datetime.strptime(model.dt_AB_end,format('%Y-%m-%d'))
         if value >= aa_start and value <= aa_end:
             return 'AA'
         elif value >= ab_start and value <= ab_end:
             return 'AB'
-    start_date = datetime.strptime(m.dt_AA_start,format('%Y-%m-%d'))
-    end_date = datetime.strptime(m.dt_AB_end,format('%Y-%m-%d'))
-    tlist = [m.dt_AA_start]
+    start_date = datetime.strptime(model.dt_AA_start,format('%Y-%m-%d'))
+    end_date = datetime.strptime(model.dt_AB_end,format('%Y-%m-%d'))
+    tlist = [model.dt_AA_start]
     while start_date + timedelta(days=1) <= end_date:
         tlist.append(datetime.strftime(start_date + timedelta(days=1),format = '%Y-%m-%d'))
         start_date = start_date + timedelta(days=1)
     tdf = pd.DataFrame(tlist,columns=[model.dt_col])
 
     df_plot = tdf.merge(df_plot,on = 'dt',how='left')
-    fig,axes = plt.subplots(n_rows,1,figsize=(30* n_rows, 30 ))
+    fig,axes = plt.subplots(n_rows,1,figsize=(30, 10* n_rows ))
     for i, metric_col in enumerate(model.metric_cols):
         value_cols = [metric_col]
         # 指标变化趋势图
@@ -278,7 +290,8 @@ def plotab(model, group_agg=True,plot_type= 'relative',base_group=None, mean_col
         df_tmp = df_tmp.reset_index().sort_values(by = model.dt_col)
         df_tmp['period'] = df_tmp[model.dt_col].apply(timeArea)
         df_tmp['dt'] = df_tmp['dt'].apply(lambda x: datetime.strftime(datetime.strptime(x,format('%Y-%m-%d')),format = '%m-%d' ))
-        sns.lineplot(x = df_tmp[model.dt_col],y = df_tmp[metric_col][np.nan],ax=axes[i])
+        # print(df_tmp)
+        # sns.lineplot(x = df_tmp[model.dt_col],y = df_tmp[metric_col][np.nan],ax=axes[i])
         for group_name,lc in zip(group_names,sns.color_palette('deep')):
             for p in ['AA','AB']:
                 df_tmp2 = df_tmp[df_tmp['period'] == p]
@@ -289,7 +302,33 @@ def plotab(model, group_agg=True,plot_type= 'relative',base_group=None, mean_col
         axes[i].set_ylabel(metric_col,fontsize = 40)
         axes[i].legend(fontsize = 40)
     return df_tmp
-
+def formatres(df,dimensions = None,sortlist = None):
+    if dimensions:
+        cls = df.pivot(columns = dimensions,index='指标名称',values='AB阶段净提升').applymap(lambda x: -1 if '-' in str(x) else 1)
+        cls2 = df.pivot(columns = dimensions,index='指标名称',values='显著性').applymap(lambda x: 1 if '*' in str(x) else 0)
+        res = df.pivot(index = '指标名称',columns=dimensions,values='AB阶段净提升')
+    else:
+        cls = df.pivot(columns='对比分组',index='指标名称',values='AB阶段净提升').applymap(lambda x: -1 if '-' in str(x) else 1)
+        cls2 = df.pivot(columns='对比分组',index='指标名称',values='显著性').applymap(lambda x: 1 if '*' in str(x) else 0)
+        res = df.pivot(index = '指标名称',columns='对比分组',values='AB阶段净提升')
+    cls = cls * cls2
+    cls = cls.applymap(lambda x:'redcell' if x > 0 else ('greencell' if x <0 else 'greycell'))
+    if sortlist:
+        res = res.loc[sortlist,:]
+        cls = cls.loc[sortlist,:]
+    res_s = res.style\
+    .format(lambda x: x if '%' in str(x) else '{:.4f}pp'.format(x*100))\
+    .set_td_classes(cls)\
+    .set_table_styles([
+            {'selector': '.redcell', 'props': 'color:red;'}
+            ,{'selector': '.greencell', 'props': 'color:green;'}
+            ,{'selector': '.greycell', 'props': 'color:grey;'}
+            ,{'selector':'thead','props':[('background-color','#D1F2FF'),('text-align','center')]}                                                                 
+            ,{'selector':'td,th','props':[('border','1px solid black')]}                                                                  
+            ,{'selector':'tbody,td,th.row_heading','props':[('text-align','right')]}                                                            
+            ,{'selector':'td','props':[('text-align','center')]}
+    ]).set_table_attributes('style="border-collapse: collapse;"')
+    return res_s
 
 
 
