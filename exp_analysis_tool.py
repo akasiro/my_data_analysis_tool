@@ -1,13 +1,16 @@
 
 from urllib.parse import unquote,parse_qs
 from datetime import datetime,timedelta
+from math import sqrt, ceil
 
 import numpy as np
 import pandas as pd
 from collections import defaultdict
 import seaborn as sns
 import matplotlib.pyplot as plt
+from matplotlib.lines import Line2D
 import matplotlib.ticker as ticker
+import matplotlib.dates as mdates
 
 def parse_url_params(url):
     # 找到问号的位置，参数从问号后开始
@@ -42,7 +45,10 @@ def urlToParam(url):
             value = int(value)
         if len(str(value)) == 13:
             value = value/1000
-        return datetime.fromtimestamp(value).strftime('%Y-%m-%d')
+        if value == 0:
+            return None
+        else:
+            return datetime.fromtimestamp(value).strftime('%Y-%m-%d')
     def groupParser(value):
         if not isinstance(value,list):
             value = eval(value)
@@ -87,9 +93,18 @@ def toTable(url):
     ]).set_table_attributes('style="border-collapse: collapse;"')
     return df_s
 
-def genExpQueryParam(world_name,exp_name,group_col,dt_col,base_groups,exp_groups,bucket_col,dt_AA_start,dt_AA_end,dt_AB_start,dt_AB_end,sql_parttern = None):
+def genExpQueryParam(
+        sql_parttern = None
+        ,group_col = 'group_name'
+        ,dt_col = 'dt'
+        ,bucket_col = 'bucket_id'
+        ,dynamic_group = True
+        ,print_flag = True
+        ,datelimit = 35
+        ,**kwargs
+):
     '''
-    param = {
+    **kwargs = {
         'world_name': 'w_n_kwai_apps_did_1175'
         ,'exp_name':'eco_test_40_10p'
         ,'group_col' : 'group_name' #分组变量列名
@@ -103,45 +118,125 @@ def genExpQueryParam(world_name,exp_name,group_col,dt_col,base_groups,exp_groups
         ,'dt_AB_end' : '2024-11-11'
     }
     '''
-    if not sql_parttern:
-        sql_parttern = '''
-        add jar viewfs:///home/system/hive/resources/abtest/kuaishou-abtest-udf-latest.jar;
-        create temporary function lookupTimedExp as 'com.kuaishou.abtest.udf.LookupTimedExp';
-        create temporary function lookupTimedGroup as 'com.kuaishou.abtest.udf.LookupTimedGroup';
-        create temporary function lookupBucketId as 'com.kuaishou.abtest.udf.LookupBucketId';
-        with didexp as
-        ( --作为左表
-         select   p_date
-                 ,device_id
-                 ,lookupTimedGroup( '{pdate_AB_start}','','{world_name}',cast(0 as bigint) ,device_id ) as group_name
-                 ,cast(lookupBucketId('{world_name}',device_id,0) as bigint) as bucket_id
-                 ,1                                                           as dau
-         from     npcdm.dim_pub_device_daily
-         where    (p_date between '{pdate_AA_start}' and '{pdate_AA_end}' or p_date between '{pdate_AB_start}' and '{pdate_AB_end}')
-         and      lookupTimedExp( '{pdate_AB_start}', '', '{world_name}', cast(0 as bigint) , device_id ) = '{exp_name}'
-         and      lookupTimedGroup( '{pdate_AB_start}', '', '{world_name}', cast(0 as bigint) , device_id ) in {group_need}
-         and      func_product = 'KWAI'
-         and      explore_locale = 'br'
-         and      is_spammer = 0
-         and      is_today_active = 1
-         and      coalesce(device_id, '') <> ''
-        )
+    world_name = kwargs.get('world_name')
+    exp_name = kwargs.get('exp_name')
+    base_groups = kwargs.get('base_groups')
+    exp_groups = kwargs.get('exp_groups')
+    dt_AA_start = kwargs.get('dt_AA_start')
+    dt_AA_end = kwargs.get('dt_AA_end')
+    dt_AB_start = kwargs.get('dt_AB_start')
+    dt_AB_end = kwargs.get('dt_AB_end')
 
-        '''
-    pdate_AA_start = dt_AA_start.replace('-','')
-    pdate_AA_end = dt_AA_end.replace('-','')
-    pdate_AB_start = dt_AB_start.replace('-','')
-    pdate_AB_end = dt_AB_end.replace('-','')
-    group_need = str(tuple(base_groups + exp_groups))
-    sql_query = sql_parttern.format(
-        world_name = world_name
-        ,exp_name = exp_name
-        ,pdate_AA_start = pdate_AA_start
-        ,pdate_AA_end = pdate_AA_end
-        ,pdate_AB_start = pdate_AB_start
-        ,pdate_AB_end = pdate_AB_end
-        ,group_need = group_need
+
+    # default 
+    default_sql_parttern = '''
+    {exp_func_import}
+    with didexp as
+    ( --作为左表
+    select   p_date
+            ,device_id
+            ,1   as dau
+            {exp_need_raw}
+    from     npcdm.dim_pub_device_daily
+    where    {p_date_condition}
+    {exp_condition}
+    and      func_product = 'KWAI'
+    and      explore_locale = 'br'
+    and      is_spammer = 0
+    and      is_today_active = 1
+    and      coalesce(device_id, '') <> ''
     )
+    select 
+    didexp.p_date as p_date
+    {exp_need}
+    ,sum(dau) as dau
+    from didexp
+    group by didexp.p_date
+    {exp_need};
+    '''
+    default_exp_func_import = '''
+    add jar viewfs:///home/system/hive/resources/abtest/kuaishou-abtest-udf-latest.jar;
+    create temporary function lookupTimedExp as 'com.kuaishou.abtest.udf.LookupTimedExp';
+    create temporary function lookupTimedGroup as 'com.kuaishou.abtest.udf.LookupTimedGroup';
+    create temporary function lookupBucketId as 'com.kuaishou.abtest.udf.LookupBucketId';
+    '''
+    default_exp_condition = '''
+    and lookupTimedExp( {group_date}, '', '{world_name}', cast(0 as bigint) , device_id ) = '{exp_name}'
+    and lookupTimedGroup( {group_date}, '', '{world_name}', cast(0 as bigint) , device_id ) in {group_need}
+    '''
+    default_exp_need_raw = '''
+    ,lookupTimedGroup( {group_date},'','{world_name}',cast(0 as bigint) ,device_id ) as {group_col}
+    ,cast(lookupBucketId('{world_name}',device_id,0) as bigint) as {bucket_col}
+    '''
+    default_p_date_condition = "p_date between '{{ ds_nodash }}' and '{{ ds_nodash }}'"
+    default_exp_need = f'''
+    ,{group_col}
+    ,{bucket_col}
+    '''
+    default_exp_period = '''
+    ,case when p_date between '{pdate_AA_start}' and '{pdate_AA_end}' then 'aa'
+    when p_date between '{pdate_AB_start}' and '{pdate_AB_end}' then 'ab'
+    end                                                                 as ab_type
+    '''
+    if not sql_parttern:
+        sql_parttern = default_sql_parttern
+    if world_name is None or exp_name is None or base_groups is None or exp_groups is None or dt_AB_start is None:
+        exp_func_import = ''
+        exp_condition = ''
+        exp_need_raw = ''
+        exp_need = ''
+        p_date_condition = default_p_date_condition
+    else:
+        
+        group_need = str(tuple(base_groups + exp_groups))
+        pdate_AB_start = dt_AB_start.replace('-','')
+        pdate_AB_end = dt_AB_end.replace('-','')
+        if dynamic_group:
+            group_date = 'p_date'
+        else:
+            group_date = f'"{pdate_AB_start}"'
+        exp_func_import = default_exp_func_import
+        exp_condition = default_exp_condition.format(
+            group_date = group_date
+            ,world_name = world_name
+            ,exp_name = exp_name
+            ,group_need = group_need
+        )
+        exp_need_raw = default_exp_need_raw.format(
+            group_date = group_date
+            ,world_name = world_name
+            ,exp_name = exp_name
+            ,group_col = group_col
+            ,bucket_col = bucket_col
+        )
+        exp_need = default_exp_need
+        if dt_AA_start is None:
+            p_date_condition = f"p_date between '{pdate_AB_start}' and '{pdate_AB_end}'"
+        else:
+            pdate_AA_start = dt_AA_start.replace('-','')
+            pdate_AA_end = dt_AA_end.replace('-','')
+            exp_need_raw = exp_need_raw + default_exp_period.format(
+                pdate_AA_start = pdate_AA_start
+                ,pdate_AA_end = pdate_AA_end
+                ,pdate_AB_start = pdate_AB_start
+                ,pdate_AB_end = pdate_AB_end
+            )
+            exp_need = exp_need + ',ab_type'
+            if len(pd.date_range(dt_AA_start,dt_AB_end)) > datelimit:
+                p_date_condition = f"((p_date between '{pdate_AA_start}' and '{pdate_AA_end}') or (p_date between '{pdate_AB_start}' and '{pdate_AB_end}'))"
+            else:
+                p_date_condition = f"p_date between '{pdate_AA_start}' and '{pdate_AB_end}'"
+
+
+    sql_query = sql_parttern.format(
+        exp_func_import = exp_func_import
+        ,exp_condition = exp_condition
+        ,exp_need_raw = exp_need_raw
+        ,exp_need = exp_need
+        ,p_date_condition = p_date_condition
+    )
+    if print_flag:
+        print(sql_query)
     did_param = {
         'group_col' : group_col #分组变量列名
         ,'dt_col' : dt_col # 时间变量列名
@@ -153,8 +248,8 @@ def genExpQueryParam(world_name,exp_name,group_col,dt_col,base_groups,exp_groups
         ,'dt_AB_start' : dt_AB_start
         ,'dt_AB_end' : dt_AB_end
     }
-    print(sql_query)
     return did_param
+
 
 
 def expMetricCal(df,metric_cols = ['dau','launch_cnt','app_use_duration','avg_app_use_duration','avg_play_cnt']):
@@ -198,12 +293,28 @@ def expMetricCal(df,metric_cols = ['dau','launch_cnt','app_use_duration','avg_ap
         return df['negtive_play_cnt']/df['play_cnt']
     def gen_pos_vv_rate(df):
         return df['v1_positive_play_cnt']/df['play_cnt']
+    def gen_pos_vv_ratev2(df):
+        return df['v2_positive_play_cnt']/df['play_cnt']
     def gen_lt7(df):
         return df['lt_7d']/df['dau']
     def gen_valid_interest_num_fisrt(df):
-        return df['valid_interest_num_fisrt']/df['dau']
+        return df['valid_csm_first_tag_num_75th']/df['dau']
     def gen_valid_interest_num_second(df):
-        return df['valid_interest_num_second']/df['dau']
+        return df['valid_csm_second_tag_num_75th']/df['dau']
+    def gen_pssq_neg_rate(df):
+        if df['pssq_answer_cnt'] == 0:
+            return np.nan
+        else:
+            return df['pssq_neg_cnt']/df['pssq_answer_cnt']
+    def gen_sf_neg_rate(df):
+        if df['sf_answer_cnt'] == 0:
+            return np.nan
+        else:
+            return df['sf_neg_cnt']/df['sf_answer_cnt']
+    def gen_pstv_feedback_photo_pct(df):
+        return df['pstv_feedback_photo_play_cnt']/df['play_cnt']
+    def gen_ngtv_feedback_photo_pct(df):
+        return df['ngtv_feedback_photo_play_cnt']/df['play_cnt']
     metric_dict = {
         'dt':gen_dt
         ,'dau':gen_dau
@@ -225,9 +336,14 @@ def expMetricCal(df,metric_cols = ['dau','launch_cnt','app_use_duration','avg_ap
         ,'skip115_rate':gen_skip115_rate
         ,'neg_vv_rate':gen_neg_vv_rate
         ,'pos_vv_rate':gen_pos_vv_rate
+        ,'pos_vv_ratev2':gen_pos_vv_ratev2
         ,'lt7':gen_lt7
         ,'valid_interest_num_fisrt':gen_valid_interest_num_fisrt
         ,'valid_interest_num_second':gen_valid_interest_num_second
+        ,'pssq_neg_rate':gen_pssq_neg_rate
+        ,'sf_neg_rate':gen_sf_neg_rate
+        ,'pstv_feedback_photo_pct':gen_pstv_feedback_photo_pct
+        ,'ngtv_feedback_photo_pct':gen_ngtv_feedback_photo_pct
     }
     for i in metric_cols:
         if i in metric_dict.keys():
@@ -236,46 +352,41 @@ def expMetricCal(df,metric_cols = ['dau','launch_cnt','app_use_duration','avg_ap
     return df
 
 
-def plotab(model, group_agg=True,plot_type= 'relative',base_group=None, mean_cols=[]):
-    df_plot = model.df.copy()
-    dt_min = df_plot[model.dt_col].min()
-    if group_agg:
-        df_plot[model.group_col] = df_plot[model.group_col].apply(lambda x: 'EXP' if x in model.exp_groups else 'BASE')
-    group_names = list(df_plot[model.group_col].unique())
-    n_rows = len(model.metric_cols)
-    def timeArea(value):
-        value = datetime.strptime(value,format('%Y-%m-%d'))
-        aa_start = datetime.strptime(model.dt_AA_start,format('%Y-%m-%d'))
-        aa_end = datetime.strptime(model.dt_AA_end,format('%Y-%m-%d'))
-        ab_start = datetime.strptime(model.dt_AB_start,format('%Y-%m-%d'))
-        ab_end = datetime.strptime(model.dt_AB_end,format('%Y-%m-%d'))
-        if value >= aa_start and value <= aa_end:
-            return 'AA'
-        elif value >= ab_start and value <= ab_end:
-            return 'AB'
-    start_date = datetime.strptime(model.dt_AA_start,format('%Y-%m-%d'))
-    end_date = datetime.strptime(model.dt_AB_end,format('%Y-%m-%d'))
-    tlist = [model.dt_AA_start]
-    while start_date + timedelta(days=1) <= end_date:
-        tlist.append(datetime.strftime(start_date + timedelta(days=1),format = '%Y-%m-%d'))
-        start_date = start_date + timedelta(days=1)
-    tdf = pd.DataFrame(tlist,columns=[model.dt_col])
+def plotab(model, group_agg=True,plot_type= 'relative',base_group=None, mean_cols=[],metric_cols = None):
+    df_plot = model.raw_df.copy()
+    group_col = model.group_col
+    dt_col = model.dt_col
+    if metric_cols is None:
+        metric_cols = model.metric_cols
+    exp_groups = model.exp_groups
+    dt_AA_start = model.dt_AA_start
+    dt_AA_end = model.dt_AA_end 
+    dt_AB_start = model.dt_AB_start
+    dt_AB_end = model.dt_AB_end
 
-    df_plot = tdf.merge(df_plot,on = 'dt',how='left')
+
+    if group_agg:
+        df_plot[group_col] = df_plot[group_col].apply(lambda x: 'EXP' if x in exp_groups else 'BASE')
+    group_names = list(df_plot[group_col].unique())
+    n_rows = len(metric_cols)
     fig,axes = plt.subplots(n_rows,1,figsize=(30, 10* n_rows ))
-    for i, metric_col in enumerate(model.metric_cols):
+    full_dates = pd.date_range(start=dt_AA_start, end=dt_AB_end)
+    
+    for i, metric_col in enumerate(metric_cols):
+        if n_rows == 1:
+            ax = axes 
+        else:
+            ax = axes[i]
         value_cols = [metric_col]
         # 指标变化趋势图
         if plot_type == 'absolute':
-            if metric_col in mean_cols:
-                df_tmp = df_plot.pivot_table(index=model.dt_col, columns=model.group_col,
-                                                values=value_cols, aggfunc=np.mean)
-            else:
-                df_tmp = df_plot.pivot_table(index=model.dt_col, columns=model.group_col,
-                                                values=value_cols, aggfunc=np.sum)
+            df_tmp = df_plot.pivot_table(index=dt_col, columns=group_col,values=value_cols, aggfunc=np.mean,dropna=False)
+            # 分组聚合 基准组 为 BASE
+            if group_agg:
+                df_tmp[metric_col] = df_tmp[metric_col].transform(lambda x: x - df_tmp[metric_col]['BASE'])
         # 百分比效果趋势图
         elif plot_type == 'relative':
-            df_tmp = df_plot.pivot_table(index=model.dt_col, columns=model.group_col,values=value_cols, aggfunc=np.mean,dropna=False)
+            df_tmp = df_plot.pivot_table(index=dt_col, columns=group_col,values=value_cols, aggfunc=np.mean,dropna=False)
             # 分组聚合 基准组 为 BASE
             if group_agg:
                 df_tmp[metric_col] = df_tmp[metric_col].transform(lambda x: x / df_tmp[metric_col]['BASE'] - 1.0)
@@ -285,23 +396,37 @@ def plotab(model, group_agg=True,plot_type= 'relative',base_group=None, mean_col
                 if base_group not in model.base_groups + model.exp_groups:
                     raise ValueError('base_group must be in base_groups or exp_groups.')
                 df_tmp[metric_col] = df_tmp[metric_col].transform(lambda x: x / df_tmp[metric_col][base_group] - 1.0)
+        elif plot_type == 'raw':
+            df_tmp = df_plot.pivot_table(index=dt_col, columns=group_col,values=value_cols, aggfunc=np.mean,dropna=False)
+            
         else:
             raise ValueError("plot_type should be 'absolute' or 'relative'.")
-        df_tmp = df_tmp.reset_index().sort_values(by = model.dt_col)
-        df_tmp['period'] = df_tmp[model.dt_col].apply(timeArea)
-        df_tmp['dt'] = df_tmp['dt'].apply(lambda x: datetime.strftime(datetime.strptime(x,format('%Y-%m-%d')),format = '%m-%d' ))
-        # print(df_tmp)
-        # sns.lineplot(x = df_tmp[model.dt_col],y = df_tmp[metric_col][np.nan],ax=axes[i])
+        df_tmp.index = pd.to_datetime(df_tmp.index)
+        df_tmp = df_tmp.reindex(full_dates, fill_value=np.nan)
+
+        custom_legend = []
         for group_name,lc in zip(group_names,sns.color_palette('deep')):
-            for p in ['AA','AB']:
-                df_tmp2 = df_tmp[df_tmp['period'] == p]
-                if p == 'AA':
-                    sns.lineplot(x = df_tmp2[model.dt_col],y = df_tmp2[metric_col][group_name],label = group_name,color = lc,ax=axes[i])
-                else:
-                    sns.lineplot(x = df_tmp2[model.dt_col],y = df_tmp2[metric_col][group_name],color = lc,ax=axes[i])
-        axes[i].set_ylabel(metric_col,fontsize = 40)
-        axes[i].legend(fontsize = 40)
-    return df_tmp
+            df_tmp2 = df_tmp.xs(group_name, level=group_col,axis=1)
+            df_tmp2['plot_group'] = df_tmp2[metric_col].isna().cumsum()
+            df_tmp2 = df_tmp2.reset_index(names = dt_col)
+            sns.lineplot(data = df_tmp2.dropna(subset = metric_col),x = dt_col, y = metric_col,hue = 'plot_group',palette = [lc],markers='o',ax=ax)
+            custom_legend.append(Line2D([0], [0], color=lc, lw=2, label=group_name))
+        ax_xgap = ceil(len(df_tmp2)/20)
+        ax.legend(handles=custom_legend, title=group_col)
+        ax.xaxis.set_major_formatter(mdates.DateFormatter('%m-%d'))
+        ax.xaxis.set_major_locator(ticker.MultipleLocator(ax_xgap))
+        if plot_type == 'absolute':
+            def pp_formatter(x, pos):
+                return f"{x*100:.4f}pp"
+            ax.yaxis.set_major_formatter(ticker.FuncFormatter(pp_formatter))
+        elif plot_type == 'relative':
+            ax.yaxis.set_major_formatter(ticker.PercentFormatter(xmax=1,decimals=4))
+        
+        ax.axvline(pd.to_datetime(dt_AA_start), linestyle='--', color='red')
+        ax.axvline(pd.to_datetime(dt_AA_end), linestyle='--', color='red')
+        ax.axvline(pd.to_datetime(dt_AB_start), linestyle='--', color='red')
+        ax.axvline(pd.to_datetime(dt_AB_end), linestyle='--', color='red')
+    return fig,axes
 def formatres(df,dimensions = None,sortlist = None,negmetric = None):
     if dimensions:
         cls = df.pivot(columns = dimensions,index='指标名称',values='AB阶段净提升').applymap(lambda x: -1 if '-' in str(x) else 1)
