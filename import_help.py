@@ -90,9 +90,9 @@ active_degree_dict = {
     ,'active_4~6days_last_week':'2:周中活'
     ,np.nan:'7:未知'
 }
-with open('/Users/ping/Desktop/chenping06backup/Desktop/chenping/tool/sql_pattern.sql') as f:
-    sql_pattern = f.read()
 
+with open('/Users/ping/Desktop/chenping06backup/Desktop/chenping/tool/my_data_analysis_tool/sql_parttern.pkl','rb') as f:
+    sql_parttern = pickle.load(f)
 with open('/Users/ping/Desktop/chenping06backup/Desktop/chenping/tool/my_data_analysis_tool/xtr.pkl', 'rb') as f:
     xtr = pickle.load(f)
     xtr_dict = xtr.get('xtr_dict')

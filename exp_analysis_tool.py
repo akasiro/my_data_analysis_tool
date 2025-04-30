@@ -13,6 +13,11 @@ import matplotlib.ticker as ticker
 import matplotlib.dates as mdates
 
 def parse_url_params(url):
+    """url解析器
+    Args:
+        url(str): 带参数的url
+    Retuens(dict): 解析后的参数
+    """
     # 找到问号的位置，参数从问号后开始
     question_mark_index = url.find('?')
     if question_mark_index == -1:
@@ -40,6 +45,24 @@ def parse_url_params(url):
     return dict(param_dict)
 
 def urlToParam(url):
+    """url解析器
+    Args:
+        url(str): 带参数的url
+    Retuens(dict): 解析后的参数
+    Example:
+        >>> myeal.urlToParam(url)
+        {'world_name': 'w_n_kwai_apps_did_1511',
+        'exp_name': 'fr_rank_5percent_20250306',
+        'group_col': 'group_name',
+        'dt_col': 'dt',
+        'base_groups': ['base1', 'base2', 'base3', 'base4'],
+        'exp_groups': ['exp5', 'exp6'],
+        'bucket_col': 'bucket_id',
+        'dt_AA_start': '2025-03-06',
+        'dt_AA_end': '2025-03-13',
+        'dt_AB_start': '2025-03-22',
+        'dt_AB_end': '2025-03-26'}
+    """
     def timeParser(value):
         if not isinstance(value,int):
             value = int(value)
@@ -75,6 +98,11 @@ def urlToParam(url):
     resDict['dt_AB_end'] = timeParser(queryDict.get('to')[0])
     return resDict
 def toTable(url):
+    """url转化为带格式的表格
+    Args:
+        url(str): 带参数的url
+    Retuens(pandas.DataFrame.Styler): 格式化表格
+    """
     param = urlToParam(url)
     df = pd.DataFrame(list(param.items()), columns=['key', 'value']).set_index('key').loc[['world_name','exp_name','base_groups','exp_groups','dt_AA_start','dt_AA_end','dt_AB_start','dt_AB_end']]
     # df.loc['exp_name'] = {'key':'url','value':'<a href="{}">实验链接</a>'.format(url)}
@@ -103,21 +131,35 @@ def genExpQueryParam(
         ,datelimit = 35
         ,**kwargs
 ):
-    '''
-    **kwargs = {
-        'world_name': 'w_n_kwai_apps_did_1175'
-        ,'exp_name':'eco_test_40_10p'
-        ,'group_col' : 'group_name' #分组变量列名
-        ,'dt_col' : 'dt' # 时间变量列名
-        ,'base_groups' : ['base'] # 对照组组名列表，必须为df中指定的group_col列的子集
-        ,'exp_groups' : ['exp3','exp4']
-        ,'bucket_col' : 'bucket_id' #实验分桶列名
-        ,'dt_AA_start':'2024-10-17'
-        ,'dt_AA_end':'2024-10-23'
-        ,'dt_AB_start' : '2024-11-01'
-        ,'dt_AB_end' : '2024-11-11'
-    }
-    '''
+    """生成实验模型参数，打印查询sql
+    Args:
+        sql_parttern(str): 查询sql模板, default = None
+        group_col(str): 实验分组列名, default = 'group_name'
+        dt_col(str): 时间列名, default = 'dt'
+        bucket_col(str): 分桶列名, default = 'bucket_id'
+        dynamic_group(bool): 是否动态分组, default = True
+        print_flag(bool): 是否打印sql, default = True
+        datelimit(int): 实验开始时间距离实验结束时间的天数如果大于限制sql只去aa和ab否则取aa开始到ab结束, default = 35
+        **kwargs: 其他参数，传入实验参数，可选不传入取数为大盘，
+            
+    Returns:
+        dict: 实验模型参数
+    Example:
+        >>> p = {
+                'world_name': 'w_n_kwai_apps_did_1175'
+                ,'exp_name':'eco_test_40_10p'
+                ,'group_col' : 'group_name' #分组变量列名
+                ,'dt_col' : 'dt' # 时间变量列名
+                ,'base_groups' : ['base'] # 对照组组名列表，必须为df中指定的group_col列的子集
+                ,'exp_groups' : ['exp3','exp4']
+                ,'bucket_col' : 'bucket_id' #实验分桶列名
+                ,'dt_AA_start':'2024-10-17'
+                ,'dt_AA_end':'2024-10-23'
+                ,'dt_AB_start' : '2024-11-01'
+                ,'dt_AB_end' : '2024-11-11'
+                }
+        >>> genExpQueryParam(**p)
+    """
     world_name = kwargs.get('world_name')
     exp_name = kwargs.get('exp_name')
     base_groups = kwargs.get('base_groups')
@@ -252,7 +294,14 @@ def genExpQueryParam(
 
 
 
-def expMetricCal(df,metric_cols = ['dau','launch_cnt','app_use_duration','avg_app_use_duration','avg_play_cnt']):
+def expMetricCal(df,metric_cols = []):
+    """计算指标(弃用)
+    Args:
+        df (pandas.core.frame.DataFrame): 原始数据
+        metric_cols (list): 指标列表, default = []
+    Returns:
+        pandas.core.frame.DataFrame: 指标计算结果
+    """
     def gen_dt(df):
         return datetime.strftime(datetime.strptime(str(df['p_date']),'%Y%m%d'),'%Y-%m-%d')
     def gen_dau(df):
@@ -353,6 +402,18 @@ def expMetricCal(df,metric_cols = ['dau','launch_cnt','app_use_duration','avg_ap
 
 
 def plotab(model, group_agg=True,plot_type= 'relative',base_group=None, mean_cols=[],metric_cols = None):
+    """绘制AB测试结果图
+    Args:
+        model (ABTestBootstrap): 包含AB测试结果的ABTestBootstrap模型
+        group_agg (bool): 是否对实验组进行聚合计算，默认True
+        plot_type (str): 绘制的图类型，默认‘relative’，可选’absolute’，’percent’
+        base_group (str): 对照组名称，默认为None，取model.base_group
+        mean_cols (list): 取均值的列，默认为[]
+        metric_cols (list): 指标列表，默认为model.metric_cols
+    Returns:
+        matplotlib.pyplot.figure: AB测试结果图
+        matplotlib.pyplot.axes: AB测试结果图的子图
+    """
     df_plot = model.raw_df.copy()
     group_col = model.group_col
     dt_col = model.dt_col
@@ -428,6 +489,16 @@ def plotab(model, group_agg=True,plot_type= 'relative',base_group=None, mean_col
         ax.axvline(pd.to_datetime(dt_AB_end), linestyle='--', color='red')
     return fig,axes
 def formatres(df,dimensions = None,sortlist = None,negmetric = None):
+    """
+    格式化ABtest结果
+    Args:
+        df (dataframe): 包含ABtest结果的dataframe
+        dimensions (list): 维度列表
+        sortlist (list): 排序列表
+        negmetric (str): 负向指标
+    Returns:
+        res (dataframe): 格式化后的dataframe
+    """
     if dimensions:
         cls = df.pivot(columns = dimensions,index='指标名称',values='AB阶段净提升').applymap(lambda x: -1 if '-' in str(x) else 1)
         cls2 = df.pivot(columns = dimensions,index='指标名称',values='显著性').applymap(lambda x: 1 if '*' in str(x) else 0)
